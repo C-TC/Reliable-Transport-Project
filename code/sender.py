@@ -144,6 +144,13 @@ class GBNSender(Automaton):
                 # send a packet to the receiver containing the created header #
                 # and the corresponding payload                               #
                 ###############################################################
+                
+                # setup the header
+                header_GBN = GBN(type="data", len=len(payload), hlen=6, num=self.current, win=self.win)
+                # type, options, len, hlen, num, win
+                
+                # send the packet
+                send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
 
                 # send with the proper window size
                 proper_win = min(self.win,self.receiver_win)
@@ -170,6 +177,7 @@ class GBNSender(Automaton):
 
             # no more payload pieces in the queue --> if all are acknowledged,
             # we can end the sender
+
             except que.Empty:
                 if self.unack == self.current:
                     raise self.END()
@@ -200,6 +208,9 @@ class GBNSender(Automaton):
             # remove all the acknowledged sequence numbers from the buffer #
             # make sure that you can handle a sequence number overflow     #
             ################################################################
+            
+            # if it's the one we are waiting for
+            self.unack = ack
 
             ####################################
 
@@ -376,7 +387,18 @@ class GBNSender(Automaton):
                     send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
                     log.debug("SACK resend packet: %s", idx)
 
+            #     # update the first unacknowledged packet
+            #     self.unack = ack
 
+            # # remove the acknowledged packet from the buffer
+            # tmp_buffer = self.buffer.copy()
+            
+            # # IT SEEMS UGLY, BUT IT'S THE ONLY SOLUTION I FOUND
+            # for num in tmp_buffer:
+            #     if ((num+1) % 2**self.n_bits) == ack:
+            #         self.buffer.pop(num)
+            
+            ################################################################
 
         # back to SEND state
         raise self.SEND()
