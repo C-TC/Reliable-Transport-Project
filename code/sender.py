@@ -130,11 +130,16 @@ class GBNSender(Automaton):
                 # send a packet to the receiver containing the created header #
                 # and the corresponding payload                               #
                 ###############################################################
-                
+
                 # setup the header
-                header_GBN = GBN(type="data", len=len(payload), hlen=6, num=self.current, win=self.win)
-                # type, options, len, hlen, num, win
-                
+                header_GBN = GBN(
+                    type="data", 
+                    len=len(payload), 
+                    hlen=6, 
+                    num=self.current, 
+                    win=min(self.win,self.receiver_win)
+                )
+
                 # send the packet
                 send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
 
@@ -180,31 +185,19 @@ class GBNSender(Automaton):
             # remove all the acknowledged sequence numbers from the buffer #
             # make sure that you can handle a sequence number overflow     #
             ################################################################
-            
-            # if it's the one we are waiting for
+
+            # loop through the possible window
+            for num in range(ack - max(self.win, self.receiver_win), ack):
+
+                # wrap the possible sequence numbers
+                num = num % 2**self.n_bits
+
+                # pop the packet if it's in the buffer
+                if num in self.buffer:
+                    self.buffer.pop(num, None)
+
+            # update the unack
             self.unack = ack
-
-            tmp_buffer = self.buffer.copy()
-
-            for num in tmp_buffer:
-                if num % 2**self.n_bits <= ack:
-                    self.buffer.pop(num)
-
-            # if (self.unack + 1) % 2**self.n_bits == ack:
-
-            #     # remove it from the buffer
-            #     self.buffer.pop(self.unack)
-
-            #     # update the first unacknowledged packet
-            #     self.unack = ack
-
-            # # remove the acknowledged packet from the buffer
-            # tmp_buffer = self.buffer.copy()
-            
-            # # IT SEEMS UGLY, BUT IT'S THE ONLY SOLUTION I FOUND
-            # for num in tmp_buffer:
-            #     if ((num+1) % 2**self.n_bits) == ack:
-            #         self.buffer.pop(num)
             
             ################################################################
 
@@ -233,7 +226,13 @@ class GBNSender(Automaton):
             # get the payload
             payload = self.buffer[num]
             # setup the header
-            header_GBN = GBN(type="data", len=len(payload), hlen=6, num=num, win=self.win)
+            header_GBN = GBN(
+                type="data", 
+                len=len(payload), 
+                hlen=6, 
+                num=num, 
+                win=min(self.win,self.receiver_win)
+            )
             
             # send the packet
             send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
