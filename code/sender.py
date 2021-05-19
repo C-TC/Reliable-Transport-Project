@@ -131,8 +131,15 @@ class GBNSender(Automaton):
                 # and the corresponding payload                               #
                 ###############################################################
 
-
-
+                # send with negotiated window size
+                header_GBN = GBN(type="data",
+                                 options=0,
+                                 len=len(payload),
+                                 hlen=6,
+                                 num=self.current,
+                                 win=min(self.win,self.receiver_win))
+                send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
+                #log.debug("Current payload size: %s", len(payload))
 
                 # sequence number of next packet
                 self.current = int((self.current + 1) % 2**self.n_bits)
@@ -174,8 +181,14 @@ class GBNSender(Automaton):
             # make sure that you can handle a sequence number overflow     #
             ################################################################
 
-
-
+            self.unack=ack
+            possible_win=max(self.win, self.receiver_win)
+            #for index in range(self.unack-negotiated_win, self.unack):
+            #should we use the negotiated window size here?
+            # maybe problem before first ack comes.
+            for index in range(self.unack-possible_win, self.unack):
+                if index % 2**self.n_bits in self.buffer:
+                    self.buffer.pop(index,None)             
 
 
 
@@ -199,7 +212,14 @@ class GBNSender(Automaton):
         # (all the packets currently in self.buffer) #
         ##############################################
 
-
+        for index,payload in self.buffer.items():
+            header_GBN = GBN(type="data",
+                                 options=0,
+                                 len=len(payload),
+                                 hlen=6,
+                                 num=index,
+                                 win=min(self.win,self.receiver_win))
+            send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
 
 
 
