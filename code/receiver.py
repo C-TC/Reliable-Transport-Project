@@ -171,6 +171,11 @@ class GBNReceiver(Automaton):
                 if num == self.next:
                     log.debug("Packet has expected sequence number: %s", num)
 
+                    # check if last packet --> end receiver
+                    if len(payload) < self.p_size:
+                        self.end_receiver = True
+                        self.end_num = int((self.next + 1) % 2**self.n_bits)
+
                     # append payload (as binary data) to output file
                     with open(self.out_file, 'ab') as file:
                         file.write(payload)
