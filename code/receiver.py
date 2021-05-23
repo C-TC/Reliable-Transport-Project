@@ -87,6 +87,7 @@ class GBNReceiver(Automaton):
         self.p_size = chunk_size
         self.end_receiver = False
         self.end_num = -1
+        self.buffer = {}
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -142,6 +143,7 @@ class GBNReceiver(Automaton):
             ptype = pkt.getlayer(GBN).type
             if ptype == 0:
 
+                '''
                 # check if last packet --> end receiver
                 if len(payload) < self.p_size:
                     self.end_receiver = True
@@ -163,6 +165,47 @@ class GBNReceiver(Automaton):
                 else:
                     log.debug("Out of sequence segment [num = %s] received. "
                               "Expected %s", num, self.next)
+                '''
+                send_win = pkt.getlayer(GBN).win
+                possible_win = max(send_win, self.win)
+                if num == self.next:
+                    log.debug("Packet has expected sequence number: %s", num)
+
+                    # append payload (as binary data) to output file
+                    with open(self.out_file, 'ab') as file:
+                        file.write(payload)
+
+                    log.debug("Delivered packet to upper layer: %s", num)
+
+                    self.next = int((self.next + 1) % 2**self.n_bits)
+
+                    while self.next in self.buffer:
+
+                        pl = self.buffer.pop(self.next)
+
+                        # check if last packet --> end receiver
+                        if len(pl) < self.p_size:
+                            self.end_receiver = True
+                            self.end_num = int((self.next + 1) % 2**self.n_bits)
+                        
+                        # append payload (as binary data) to output file
+                        with open(self.out_file, 'ab') as file:
+                            file.write(pl)
+
+                        log.debug("Delivered buffered packet to upper layer: %s", self.next)
+                        
+                        self.next = int((self.next + 1) % 2**self.n_bits)
+                    
+                elif num in range(self.next + 1, self.next + possible_win):
+                    # buffer this payload
+                    self.buffer[num] = payload
+                    log.debug("Buffer packet: %s", num)
+                
+                else:
+                    # Discard packets that we don't need
+                    log.debug("Discard packet: %s", num)
+
+
 
             else:
                 # we received an ACK while we are supposed to receive only
