@@ -84,6 +84,8 @@ class GBNSender(Automaton):
         self.unack = 0
         self.receiver_win = win
         self.Q_4_2 = Q_4_2
+        self.prev_ack = -1
+        self.duplicated_times = 0
         self.SACK = Q_4_3
         self.Q_4_4 = Q_4_4
 
@@ -188,7 +190,40 @@ class GBNSender(Automaton):
             # maybe problem before first ack comes.
             for index in range(self.unack-possible_win, self.unack):
                 if index % 2**self.n_bits in self.buffer:
-                    self.buffer.pop(index % 2**self.n_bits)             
+                    self.buffer.pop(index % 2**self.n_bits)
+
+            if self.Q_4_2 == 1:
+                # deal with duplicated acks within sender's window
+                # maybe use negotiated window better?  
+
+                # deal with number overflow
+                if self.current < possible_win:
+                    ack_in_win = ack >= (self.current-possible_win) % 2**self.n_bits or ack < self.current
+                else:
+                    ack_in_win = ack >= self.current-possible_win and ack < self.current
+                if ack_in_win == 1:
+                    if ack == self.prev_ack:
+                        # duplicated ack
+                        self.duplicated_times = self.duplicated_times + 1
+                        log.debug("Receive ack %s for the %s time", ack, self.duplicated_times)
+                        # resend if duplicated = 3
+                        if self.duplicated_times == 3:
+                            pl = self.buffer[ack]
+                            header_GBN = GBN(type="data",
+                                 options=0,
+                                 len=len(pl),
+                                 hlen=6,
+                                 num=ack,
+                                 win=min(self.win,self.receiver_win))
+                            send(IP(src=self.sender,dst=self.receiver) / header_GBN / pl)
+                            log.debug("Fast resend packet: %s", ack)
+                            # reset record
+                            self.prev_ack = -1
+                            self.duplicated_times = 1 # this should be unnecessary
+                    else:
+                        # not duplicated, reset record
+                        self.prev_ack = ack
+                        self.duplicated_times = 1
 
 
 
