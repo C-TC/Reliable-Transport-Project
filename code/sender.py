@@ -188,7 +188,7 @@ class GBNSender(Automaton):
             # maybe problem before first ack comes.
             for index in range(self.unack-possible_win, self.unack):
                 if index % 2**self.n_bits in self.buffer:
-                    self.buffer.pop(index,None)             
+                    self.buffer.pop(index % 2**self.n_bits)             
 
 
 
