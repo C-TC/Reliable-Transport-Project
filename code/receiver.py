@@ -168,6 +168,11 @@ class GBNReceiver(Automaton):
                 '''
                 send_win = pkt.getlayer(GBN).win
                 possible_win = max(send_win, self.win)
+                # detect if we need to buffer
+                if self.next + possible_win > 2**self.n_bits:
+                    num_in_pwin = num >= self.next + 1 or num < (self.next + possible_win) % 2**self.n_bits
+                else:
+                    num_in_pwin = num >= self.next + 1 and num < self.next + possible_win
                 if num == self.next:
                     log.debug("Packet has expected sequence number: %s", num)
 
@@ -201,7 +206,7 @@ class GBNReceiver(Automaton):
                         
                         self.next = int((self.next + 1) % 2**self.n_bits)
                     
-                elif num in range(self.next + 1, self.next + possible_win):
+                elif num_in_pwin:
                     # buffer this payload
                     self.buffer[num] = payload
                     log.debug("Buffer packet: %s", num)
