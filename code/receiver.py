@@ -16,6 +16,8 @@ from scapy.fields import (BitEnumField, BitField, ShortField, ByteField,
                           ConditionalField)
 from scapy.automaton import Automaton, ATMT
 
+from scapy.fields import (FieldLenField, FieldListField)
+
 
 FORMAT = "   [RECEIVER:%(lineno)3s - %(funcName)12s()] %(message)s"
 logging.basicConfig(format=FORMAT)
@@ -39,13 +41,36 @@ class GBN(Packet):
         win: sender/receiver window size
     """
     name = 'GBN'
+    # fields_desc = [BitEnumField("type", 0, 1, {0: "data", 1: "ack"}),
+    #                BitField("options", 0, 7),
+    #                ShortField("len", None),
+    #                ByteField("hlen", 0),
+    #                ByteField("num", 0),
+    #                ByteField("win", 0)]
+
+    # fields_desc = [BitEnumField("type", 0, 1, {0: "data", 1: "ack"}),
+    #                BitField("options", 0, 7),
+    #                ShortField("len", None),
+    #                ByteField("hlen", 0),
+    #                ByteField("num", 0),
+    #                ByteField("win", 0),
+    #                ConditionalField(FieldLenField("slen", None, count_of="sack"), lambda pkt:pkt.hlen > 6),
+    #                ConditionalField(FieldListField("sack", None, [ ByteField("block_first",0), ByteField("block_len",0)]), lambda pkt:pkt.hlen > 6)]
     fields_desc = [BitEnumField("type", 0, 1, {0: "data", 1: "ack"}),
                    BitField("options", 0, 7),
                    ShortField("len", None),
                    ByteField("hlen", 0),
                    ByteField("num", 0),
-                   ByteField("win", 0)]
-
+                   ByteField("win", 0),
+                   ConditionalField(ByteField("block_len",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("b1_start",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("b1_len",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("pad1",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("b2_start",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("b2_len",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("pad2",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("b3_start",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("b3_len",0), lambda pkt:pkt.hlen>12)]
 
 # GBN header is coming after the IP header
 bind_layers(IP, GBN, frag=0, proto=222)
@@ -74,6 +99,7 @@ class GBNReceiver(Automaton):
         """Initialize the automaton."""
         Automaton.parse_args(self, **kargs)
         self.win = window
+        self.sender_win = window
         self.n_bits = nbits
         assert self.win <= 2**self.n_bits
         self.p_data = p_data
@@ -87,6 +113,7 @@ class GBNReceiver(Automaton):
         self.p_size = chunk_size
         self.end_receiver = False
         self.end_num = -1
+        self.buffer = {}
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -123,6 +150,8 @@ class GBNReceiver(Automaton):
         num = pkt.getlayer(GBN).num
         payload = bytes(pkt.getlayer(GBN).payload)
 
+        self.sender_win = pkt.getlayer(GBN).win
+
         # received segment was lost/corrupted in the network
         if random.random() < self.p_data:
             log.debug("Data segment lost: [type = %s num = %s win = %s]",
@@ -142,27 +171,59 @@ class GBNReceiver(Automaton):
             ptype = pkt.getlayer(GBN).type
             if ptype == 0:
 
-                # check if last packet --> end receiver
-                if len(payload) < self.p_size:
-                    self.end_receiver = True
-                    self.end_num = (num + 1) % 2**self.n_bits
-
                 # this is the segment with the expected sequence number
                 if num == self.next:
                     log.debug("Packet has expected sequence number: %s", num)
+                    
+                    ##################################
+                    def save_packet(num, payload):
+                        
+                        # check if last packet --> end receiver
+                        if len(payload) < self.p_size:
+                            self.end_receiver = True
+                            self.end_num = (num + 1) % 2**self.n_bits
 
-                    # append payload (as binary data) to output file
-                    with open(self.out_file, 'ab') as file:
-                        file.write(payload)
+                        # append payload (as binary data) to output file
+                        with open(self.out_file, 'ab') as file:
+                            file.write(payload)
 
-                    log.debug("Delivered packet to upper layer: %s", num)
+                        log.debug("Delivered packet to upper layer: %s", num)
 
-                    self.next = int((self.next + 1) % 2**self.n_bits)
+                        self.next = int((self.next + 1) % 2**self.n_bits)
 
+                    save_packet(num, payload)
+                    
+                    # check if there is more in the buffer
+                    while self.next in self.buffer:
+
+                        # get the packet
+                        payload = self.buffer.pop(self.next)
+
+                        # save it to the output file
+                        save_packet(self.next, payload)
+                    ##################################
+                    
                 # this was not the expected segment
                 else:
                     log.debug("Out of sequence segment [num = %s] received. "
                               "Expected %s", num, self.next)
+                    
+                    ##################################
+                    
+                    max_num = (self.next + min(self.sender_win, self.win)) % 2**self.n_bits
+
+                    # if the window is wrapped and num is not outside
+                    if (max_num < self.next and not(max_num < num and num < self.next)
+                    # or if the window is not wrapped and the num is inside
+                    or max_num > self.next and (self.next < num and num < max_num)):
+                        
+                        # check the buffer is not full
+                        if len(self.buffer) < self.win:
+                            # save the packet
+                            self.buffer[num] = payload
+                            log.debug("Buffer packet: %s", num)
+
+                    #################################
 
             else:
                 # we received an ACK while we are supposed to receive only
@@ -177,16 +238,62 @@ class GBNReceiver(Automaton):
 
             # the ACK will be received correctly
             else:
-                header_GBN = GBN(type="ack",
-                                 options=0,
+                ##################################
+                
+                # if the send support SACK
+                if pkt.getlayer(GBN).options == 1:
+                    
+                    blocks = []
+
+                    # loop through the possible window
+                    for num in range(self.next + 1, self.next + min(self.sender_win, self.win)):
+                        
+                        # wrap the possible sequence numbers
+                        num = num % 2**self.n_bits
+
+                        # if the number in the buffer
+                        if num in self.buffer:
+
+                            # if the number is the next of the last block
+                            if len(blocks) > 0 and ((blocks[-1][0] + blocks[-1][1]) % 2**self.n_bits) == num:
+                                
+                                # increase the block length
+                                blocks[-1][1] += 1
+
+                            else:
+                                # only add a block if the size is smaller than 3
+                                if len(blocks) < 3:
+                                    # create a new block
+                                    blocks.append([num, 1])
+                    
+                    # prepare the header
+                    header_GBN = GBN(type="ack",
+                                 options=1,
                                  len=0,
-                                 hlen=6,
+                                 hlen=6 + 3 * len(blocks),
                                  num=self.next,
-                                 win=self.win)
+                                 win=self.win,
+                                 block_len=len(blocks),
+                                 b1_start=blocks[0][0] if len(blocks) >= 1 else None,
+                                 b1_len=blocks[0][1] if len(blocks) >= 1 else None,
+                                 pad1=0 if len(blocks) >= 2 else None,
+                                 b2_start=blocks[1][0] if len(blocks) >= 2 else None,
+                                 b2_len=blocks[1][1] if len(blocks) >= 2 else None,
+                                 pad2=0 if len(blocks) >= 3 else None,
+                                 b3_start=blocks[2][0] if len(blocks) >= 3 else None,
+                                 b3_len=blocks[2][1] if len(blocks) >= 3 else None)
+                else:
+                ##################################
+                    header_GBN = GBN(type="ack",
+                                    options=0,
+                                    len=0,
+                                    hlen=6,
+                                    num=self.next,
+                                    win=self.win)
 
                 log.debug("Sending ACK: %s", self.next)
                 send(IP(src=self.receiver, dst=self.sender) / header_GBN,
-                     verbose=0)
+                    verbose=0)
 
                 # last packet received and all ACKs successfully transmitted
                 # --> close receiver
