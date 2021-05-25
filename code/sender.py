@@ -40,7 +40,16 @@ class GBN(Packet):
                    ShortField("len", None),
                    ByteField("hlen", 0),
                    ByteField("num", 0),
-                   ByteField("win", 0)]
+                   ByteField("win", 0),
+                   ConditionalField(ByteField("block_len",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("b1_start",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("b1_len",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("pad1",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("b2_start",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("b2_len",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("pad2",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("b3_start",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("b3_len",0), lambda pkt:pkt.hlen>12)]
 
 
 # GBN header is coming after the IP header
@@ -84,6 +93,7 @@ class GBNSender(Automaton):
         self.unack = 0
         self.receiver_win = win
         self.Q_4_2 = Q_4_2
+        self.duplicated_acks = 1
         self.SACK = Q_4_3
         self.Q_4_4 = Q_4_4
 
@@ -130,7 +140,7 @@ class GBNSender(Automaton):
                 # send a packet to the receiver containing the created header #
                 # and the corresponding payload                               #
                 ###############################################################
-
+                
                 # setup the header
                 header_GBN = GBN(
                     type="data", 
@@ -185,20 +195,117 @@ class GBNSender(Automaton):
             # remove all the acknowledged sequence numbers from the buffer #
             # make sure that you can handle a sequence number overflow     #
             ################################################################
-
+            
             # loop through the possible window
-            for num in range(ack - max(self.win, self.receiver_win), ack):
+            for num in range(ack - min(self.win, self.receiver_win), ack):
 
                 # wrap the possible sequence numbers
                 num = num % 2**self.n_bits
 
                 # pop the packet if it's in the buffer
                 if num in self.buffer:
-                    self.buffer.pop(num, None)
-
-            # update the unack
-            self.unack = ack
+                    self.buffer.pop(num)
             
+            # selective repeat
+            if self.Q_4_2 == 1:
+                # if we receive the same ack multiple times
+                if self.unack == ack:
+                    
+                    # count them
+                    self.duplicated_acks += 1
+                    log.debug("Receive ack %s for the %s time", ack, self.duplicated_acks)
+
+                    # if we received more than 3 duplicated acks we retransmit the packet
+                    if self.duplicated_acks == 3:
+
+                        # get the payload
+                        payload = self.buffer[ack]
+                        
+                        # setup the header
+                        header_GBN = GBN(
+                            type="data", 
+                            len=len(payload), 
+                            hlen=6, 
+                            num=ack, 
+                            win=min(self.win,self.receiver_win)
+                        )
+                        log.debug("Fast resend packet: %s", ack)
+                        
+                        # send the packet
+                        send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
+
+                        # reset the counter every 3 duplicates
+                        self.duplicated_acks = 1
+                    
+                else:
+            
+                    # update the unack
+                    self.unack = ack
+
+                    # reset the counter when a new ack is received
+                    self.duplicated_acks = 1
+            
+            # sack
+            if self.SACK == 1:
+
+                # if there are options
+                if pkt.getlayer(GBN).options == 1 and pkt.getlayer(GBN).hlen > 6:
+                    
+                    holes = []
+                    block_len = pkt.getlayer(GBN).block_len
+
+                    if block_len >= 1:
+                        b1_start = pkt.getlayer(GBN).b1_start
+
+                        num = ack
+                        # every number between the ack and the start of b1
+                        while num % 2**self.n_bits != b1_start:
+                            holes.append(num)
+                            # wrap the counter
+                            num = (num + 1) % 2**self.n_bits
+
+                    if block_len >= 2:
+                        b1_start = pkt.getlayer(GBN).b1_start
+                        b1_len = pkt.getlayer(GBN).b1_len
+                        b2_start = pkt.getlayer(GBN).b2_start
+
+                        num = b1_start + b1_len
+                        # every number between the last of b1 and the start of b2
+                        while num % 2**self.n_bits != b2_start:
+                            holes.append(num)
+                            num = (num + 1) % 2**self.n_bits
+                    
+                    if block_len >= 3:
+                        b2_start = pkt.getlayer(GBN).b2_start
+                        b2_len = pkt.getlayer(GBN).b2_len
+                        b3_start = pkt.getlayer(GBN).b3_start
+
+                        num = b2_start + b2_len
+                        # every number between the last of b2 and the start of b3
+                        while num % 2**self.n_bits != b3_start:
+                            holes.append(num)
+                            num = (num + 1) % 2**self.n_bits
+
+                    # send all the holes
+                    for hole in holes:
+                        
+                        # get the payload
+                        payload = self.buffer[hole]
+
+                        # setup the header
+                        header_GBN = GBN(
+                            type="data", 
+                            options=self.SACK,
+                            len=len(payload), 
+                            hlen=6, 
+                            num=hole, 
+                            win=min(self.win,self.receiver_win)
+                        )
+                        log.debug("SACK resend packet: %s", hole)
+                        
+                        # send the packet
+                        send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
+
             ################################################################
 
         # back to SEND state
