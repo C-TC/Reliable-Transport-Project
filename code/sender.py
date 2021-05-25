@@ -4,6 +4,7 @@
 # pylint: disable=C0103,W0221,W0201,R0902,R0913,R0201
 
 import argparse
+from os import uname
 import queue as que
 import logging
 from scapy.sendrecv import send
@@ -40,8 +41,16 @@ class GBN(Packet):
                    ShortField("len", None),
                    ByteField("hlen", 0),
                    ByteField("num", 0),
-                   ByteField("win", 0)]
-
+                   ByteField("win", 0),
+                   ConditionalField(ByteField("block_len",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("left_1",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("len_1",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("pad1",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("left_2",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("len_2",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("pad2",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("left_3",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("len_3",0), lambda pkt:pkt.hlen>12)]
 
 # GBN header is coming after the IP header
 bind_layers(IP, GBN, frag=0, proto=222)
@@ -135,7 +144,7 @@ class GBNSender(Automaton):
 
                 # send with negotiated window size
                 header_GBN = GBN(type="data",
-                                 options=0,
+                                 options=self.SACK,
                                  len=len(payload),
                                  hlen=6,
                                  num=self.current,
@@ -225,6 +234,79 @@ class GBNSender(Automaton):
                         self.prev_ack = ack
                         self.duplicated_times = 1
 
+            # Q 4.3.2 only need to check hlen, no need to determine if receiver support sack
+            if self.SACK == 1:
+                header_len = pkt.getlayer(GBN).hlen
+                if header_len > 6:
+                    # firstly, if headerlength > 6, means the acked packet might be lost, resend it.
+                    payload = self.buffer[self.unack]
+                    header_GBN = GBN(type="data",
+                                    options=self.SACK,
+                                    len=len(payload),
+                                    hlen=6,
+                                    num=self.unack,
+                                    win=min(self.win,self.receiver_win))
+                    send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
+                    log.debug("SACK resend packet: %s", self.unack)
+
+                    # deal with overflow
+                    first_after_unack = (self.unack + 1) % 2**self.n_bits
+                    if pkt.getlayer(GBN).left_1 < first_after_unack:
+                        send_list = list(range(first_after_unack, 2**self.n_bits))
+                        send_list.extend(range(0, pkt.getlayer(GBN).left_1))
+                    else:
+                        send_list = list(range(first_after_unack, pkt.getlayer(GBN).left_1))
+                    
+                    for idx in send_list:
+                        payload = self.buffer[idx]
+                        header_GBN = GBN(type="data",
+                                        options=self.SACK,
+                                        len=len(payload),
+                                        hlen=6,
+                                        num=idx,
+                                        win=min(self.win,self.receiver_win))
+                        send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
+                        log.debug("SACK resend packet: %s", idx)
+
+                # between first and second block 
+                if header_len > 9:
+                    first_elem = (pkt.getlayer(GBN).left_1 + pkt.getlayer(GBN).len_1) % 2**self.n_bits
+                    if pkt.getlayer(GBN).left_2 < first_elem:
+                        send_list = list(range(first_elem, 2**self.n_bits))
+                        send_list.extend(range(0, pkt.getlayer(GBN).left_2))
+                    else:
+                        send_list = list(range(first_elem, pkt.getlayer(GBN).left_2))
+
+                    for idx in send_list:
+                        payload = self.buffer[idx]
+                        header_GBN = GBN(type="data",
+                                        options=self.SACK,
+                                        len=len(payload),
+                                        hlen=6,
+                                        num=idx,
+                                        win=min(self.win,self.receiver_win))
+                        send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
+                        log.debug("SACK resend packet: %s", idx)
+
+                # between second and third block 
+                if header_len > 12:
+                    first_elem = (pkt.getlayer(GBN).left_2 + pkt.getlayer(GBN).len_2) % 2**self.n_bits
+                    if pkt.getlayer(GBN).left_3 < first_elem:
+                        send_list = list(range(first_elem, 2**self.n_bits))
+                        send_list.extend(range(0, pkt.getlayer(GBN).left_3))
+                    else:
+                        send_list = list(range(first_elem, pkt.getlayer(GBN).left_3))
+
+                    for idx in send_list:
+                        payload = self.buffer[idx]
+                        header_GBN = GBN(type="data",
+                                        options=self.SACK,
+                                        len=len(payload),
+                                        hlen=6,
+                                        num=idx,
+                                        win=min(self.win,self.receiver_win))
+                        send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
+                        log.debug("SACK resend packet: %s", idx)
 
 
 
