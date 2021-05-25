@@ -44,7 +44,16 @@ class GBN(Packet):
                    ShortField("len", None),
                    ByteField("hlen", 0),
                    ByteField("num", 0),
-                   ByteField("win", 0)]
+                   ByteField("win", 0),
+                   ConditionalField(ByteField("block_len",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("left_1",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("len_1",0), lambda pkt:pkt.hlen>6),
+                   ConditionalField(ByteField("pad1",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("left_2",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("len_2",0), lambda pkt:pkt.hlen>9),
+                   ConditionalField(ByteField("pad2",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("left_3",0), lambda pkt:pkt.hlen>12),
+                   ConditionalField(ByteField("len_3",0), lambda pkt:pkt.hlen>12)]
 
 
 # GBN header is coming after the IP header
@@ -88,6 +97,8 @@ class GBNReceiver(Automaton):
         self.end_receiver = False
         self.end_num = -1
         self.buffer = {}
+        self.support_SACK = 1 # set to 1 in Q4.3.1
+        self.use_SACK = 0 # set to 1 if sender give option 1 at least once in Q4.3.1
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -173,6 +184,7 @@ class GBNReceiver(Automaton):
                     num_in_pwin = num >= self.next + 1 or num < (self.next + possible_win) % 2**self.n_bits
                 else:
                     num_in_pwin = num >= self.next + 1 and num < self.next + possible_win
+                
                 if num == self.next:
                     log.debug("Packet has expected sequence number: %s", num)
 
@@ -230,17 +242,102 @@ class GBNReceiver(Automaton):
 
             # the ACK will be received correctly
             else:
-                header_GBN = GBN(type="ack",
-                                 options=0,
-                                 len=0,
-                                 hlen=6,
-                                 num=self.next,
-                                 win=self.win)
+                #default header length
+                header_length = 6
+                num_blocks = 0
+                left_edge_arr = [0,0,0]
+                len_block_arr = [0,0,0]
+                sender_SACK = pkt.getlayer(GBN).options
+                # use sack if both support
+                if self.use_SACK == 0 and sender_SACK == 1 and self.support_SACK == 1:
+                    self.use_SACK = 1
+                if self.use_SACK == 1:
+                    send_win = pkt.getlayer(GBN).win
+                    possible_win = max(send_win, self.win)
+                    prev_in_block = -5
+                    for i in range(self.next + 1, self.next + possible_win):
+                        packet_num = i % 2**self.n_bits
+                        if packet_num in self.buffer:
+                            # consecutive
+                            if prev_in_block == packet_num -1 or (packet_num == 0 and prev_in_block == 2**self.n_bits -1):
+                                prev_in_block = packet_num
+                                # -1 because array index start from 0
+                                len_block_arr[num_blocks-1] += 1
+                            # new block if still have space
+                            elif num_blocks < 3:
+                                num_blocks += 1
+                                left_edge_arr[num_blocks-1] = packet_num
+                                len_block_arr[num_blocks-1] += 1
+                                prev_in_block = packet_num
+                    header_length += 3 * num_blocks
+                
 
-                log.debug("Sending ACK: %s", self.next)
-                send(IP(src=self.receiver, dst=self.sender) / header_GBN,
-                     verbose=0)
+                if num_blocks == 0:
+                    # default case or no block to report
+                    header_GBN = GBN(type="ack",
+                                    options=self.support_SACK,
+                                    len=0,
+                                    hlen=header_length,
+                                    num=self.next,
+                                    win=self.win)
 
+                    log.debug("Sending ACK: %s", self.next)
+                    send(IP(src=self.receiver, dst=self.sender) / header_GBN,
+                        verbose=0)
+                
+                elif num_blocks == 1:
+                    header_GBN = GBN(type="ack",
+                                    options=self.support_SACK,
+                                    len=0,
+                                    hlen=header_length,
+                                    num=self.next,
+                                    win=self.win,
+                                    block_len=num_blocks,
+                                    left_1=left_edge_arr[0],
+                                    len_1=len_block_arr[0])
+
+                    log.debug("Sending 1-block SACK: %s", self.next)
+                    send(IP(src=self.receiver, dst=self.sender) / header_GBN,
+                        verbose=0)
+
+                elif num_blocks == 2:
+                    header_GBN = GBN(type="ack",
+                                    options=self.support_SACK,
+                                    len=0,
+                                    hlen=header_length,
+                                    num=self.next,
+                                    win=self.win,
+                                    block_len=num_blocks,
+                                    left_1=left_edge_arr[0],
+                                    len_1=len_block_arr[0],
+                                    pad1=0,
+                                    left_2=left_edge_arr[1],
+                                    len_2=len_block_arr[1])
+
+                    log.debug("Sending 2-block SACK: %s", self.next)
+                    send(IP(src=self.receiver, dst=self.sender) / header_GBN,
+                        verbose=0)
+                
+                elif num_blocks == 3:
+                    header_GBN = GBN(type="ack",
+                                    options=self.support_SACK,
+                                    len=0,
+                                    hlen=header_length,
+                                    num=self.next,
+                                    win=self.win,
+                                    block_len=num_blocks,
+                                    left_1=left_edge_arr[0],
+                                    len_1=len_block_arr[0],
+                                    pad1=0,
+                                    left_2=left_edge_arr[1],
+                                    len_2=len_block_arr[1],
+                                    pad2=0,
+                                    left_3=left_edge_arr[2],
+                                    len_3=len_block_arr[2])
+
+                    log.debug("Sending 3-block SACK: %s", self.next)
+                    send(IP(src=self.receiver, dst=self.sender) / header_GBN,
+                        verbose=0)
                 # last packet received and all ACKs successfully transmitted
                 # --> close receiver
                 if self.end_receiver and self.end_num == self.next:
