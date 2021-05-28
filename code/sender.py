@@ -22,6 +22,7 @@ logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 
 TIMEOUT = 1  # number of seconds before packets are retransmitted
 
+window_history = [1]
 
 class GBN(Packet):
     """The GBN Header.
@@ -79,7 +80,10 @@ class GBNSender(Automaton):
                    Q_4_2, Q_4_3, Q_4_4, **kwargs):
         """Initialize Automaton."""
         Automaton.parse_args(self, **kwargs)
+        self.Q_4_4 = 1
         self.win = win
+        self.cwnd = 1
+        self.ssthresh = 10000
         self.n_bits = n_bits
         assert self.win < 2**self.n_bits
         self.receiver = receiver
@@ -95,7 +99,8 @@ class GBNSender(Automaton):
         self.Q_4_2 = Q_4_2
         self.duplicated_acks = 1
         self.SACK = Q_4_3
-        self.Q_4_4 = Q_4_4
+        # self.Q_4_4 = Q_4_4
+
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -114,6 +119,7 @@ class GBNSender(Automaton):
     @ATMT.state(final=1)
     def END(self):
         """End state of the automaton."""
+        log.debug(window_history)
         log.debug("All packets successfully transmitted!")
 
     @ATMT.state()
@@ -195,7 +201,8 @@ class GBNSender(Automaton):
             # remove all the acknowledged sequence numbers from the buffer #
             # make sure that you can handle a sequence number overflow     #
             ################################################################
-            
+            log.debug(window_history)
+
             # loop through the possible window
             for num in range(ack - min(self.win, self.receiver_win), ack):
 
@@ -206,11 +213,13 @@ class GBNSender(Automaton):
                 if num in self.buffer:
                     self.buffer.pop(num)
             
+            log.debug(self.buffer)
+
             # selective repeat
             if self.Q_4_2 == 1:
                 # if we receive the same ack multiple times
                 if self.unack == ack:
-                    
+
                     # count them
                     self.duplicated_acks += 1
                     log.debug("Receive ack %s for the %s time", ack, self.duplicated_acks)
@@ -238,9 +247,6 @@ class GBNSender(Automaton):
                         self.duplicated_acks = 1
                     
                 else:
-            
-                    # update the unack
-                    self.unack = ack
 
                     # reset the counter when a new ack is received
                     self.duplicated_acks = 1
@@ -248,9 +254,12 @@ class GBNSender(Automaton):
             # sack
             if self.SACK == 1:
 
+                # update the unack
+                self.unack = ack
+
                 # if there are options
                 if pkt.getlayer(GBN).options == 1 and pkt.getlayer(GBN).hlen > 6:
-                    
+
                     holes = []
                     block_len = pkt.getlayer(GBN).block_len
 
@@ -289,23 +298,38 @@ class GBNSender(Automaton):
                     # send all the holes
                     for hole in holes:
                         
-                        # get the payload
-                        payload = self.buffer[hole]
+                        log.debug(holes)
+                        log.debug(self.buffer)
+                        if hole in self.buffer:
+                            # get the payload
+                            payload = self.buffer[hole]
 
-                        # setup the header
-                        header_GBN = GBN(
-                            type="data", 
-                            options=self.SACK,
-                            len=len(payload), 
-                            hlen=6, 
-                            num=hole, 
-                            win=min(self.win,self.receiver_win)
-                        )
-                        log.debug("SACK resend packet: %s", hole)
-                        
-                        # send the packet
-                        send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
+                            # setup the header
+                            header_GBN = GBN(
+                                type="data", 
+                                options=self.SACK,
+                                len=len(payload), 
+                                hlen=6, 
+                                num=hole, 
+                                win=min(self.win,self.receiver_win)
+                            )
+                            log.debug("SACK resend packet: %s", hole)
+                            
+                            # send the packet
+                            send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
 
+            if self.Q_4_4 == 1:
+                if self.cwnd < self.ssthresh:
+                    self.cwnd += 1
+                    self.win = self.cwnd
+                else:
+                    self.cwnd += 1/self.cwnd
+                    self.win = int(self.cwnd)
+                
+                window_history.append(self.win)
+
+            # update the unack
+            self.unack = ack
             ################################################################
 
         # back to SEND state
@@ -314,7 +338,14 @@ class GBNSender(Automaton):
     @ATMT.timeout(SEND, TIMEOUT)
     def timeout_reached(self):
         """Transition: Timeout is reached for first unacknowledged packet."""
+
+        if self.Q_4_4 == 1:
+            self.ssthresh = self.win / 2
+            self.cwnd = self.win = 1
+            window_history.append(self.win)
+
         log.debug("Timeout for sequence number %s", self.unack)
+
         raise self.RETRANSMIT()
 
     @ATMT.state()
