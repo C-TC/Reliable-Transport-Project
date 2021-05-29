@@ -97,6 +97,8 @@ class GBNSender(Automaton):
         self.duplicated_times = 0
         self.SACK = Q_4_3
         self.Q_4_4 = Q_4_4
+        self.cwnd = float(1)
+        self.ssthresh = float('inf')
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -143,12 +145,17 @@ class GBNSender(Automaton):
                 ###############################################################
 
                 # send with negotiated window size
+                proper_win =min(self.win,self.receiver_win)
+                # Q4.4 win <= cwnd
+                if self.Q_4_4 == 1:
+                    proper_win =min(proper_win, int(self.cwnd))
+
                 header_GBN = GBN(type="data",
                                  options=self.SACK,
                                  len=len(payload),
                                  hlen=6,
                                  num=self.current,
-                                 win=min(self.win,self.receiver_win))
+                                 win=proper_win)
                 send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
                 #log.debug("Current payload size: %s", len(payload))
 
@@ -200,8 +207,15 @@ class GBNSender(Automaton):
             for index in range(self.unack-possible_win, self.unack):
                 if index % 2**self.n_bits in self.buffer:
                     self.buffer.pop(index % 2**self.n_bits)
+            # Q4.4 
+            if self.Q_4_4 == 1:
+                if self.cwnd < self.ssthresh:
+                    self.cwnd += 1.0
+                else:
+                    self.cwnd += 1.0 / self.cwnd
 
-            if self.Q_4_2 == 1:
+            # Q4.2 and Q4.4 share the same duplicate count, but don't rely on each other 
+            if self.Q_4_2 == 1 or self.Q_4_4:
                 # deal with duplicated acks within sender's window
                 # maybe use negotiated window better?  
 
@@ -215,20 +229,30 @@ class GBNSender(Automaton):
                         # duplicated ack
                         self.duplicated_times = self.duplicated_times + 1
                         log.debug("Receive ack %s for the %s time", ack, self.duplicated_times)
-                        # resend if duplicated = 3
-                        if self.duplicated_times == 3:
-                            pl = self.buffer[ack]
-                            header_GBN = GBN(type="data",
-                                 options=0,
-                                 len=len(pl),
-                                 hlen=6,
-                                 num=ack,
-                                 win=min(self.win,self.receiver_win))
-                            send(IP(src=self.sender,dst=self.receiver) / header_GBN / pl)
-                            log.debug("Fast resend packet: %s", ack)
-                            # reset record
-                            self.prev_ack = -1
-                            self.duplicated_times = 1 # this should be unnecessary
+                        
+                        # branching of Q4.4 should be in front of Q4.2!
+                        if self.Q_4_4 == 1 and self.duplicated_times >= 3:
+                            self.ssthresh = self.cwnd / 2.0
+                            self.cwnd = self.ssthresh
+                            log.debug("Congestion control: CWND fast recovery to  %s", self.cwnd)
+                            log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
+
+                        if self.Q_4_2 == 1:
+                            # resend if duplicated = 3
+                            if self.duplicated_times == 3:
+                                pl = self.buffer[ack]
+                                header_GBN = GBN(type="data",
+                                    options=0,
+                                    len=len(pl),
+                                    hlen=6,
+                                    num=ack,
+                                    win=min(self.win,self.receiver_win))
+                                send(IP(src=self.sender,dst=self.receiver) / header_GBN / pl)
+                                log.debug("Fast resend packet: %s", ack)
+                                # reset record
+                                self.prev_ack = -1
+                                self.duplicated_times = 1 # this should be unnecessary
+                        
                     else:
                         # not duplicated, reset record
                         self.prev_ack = ack
@@ -317,6 +341,12 @@ class GBNSender(Automaton):
     def timeout_reached(self):
         """Transition: Timeout is reached for first unacknowledged packet."""
         log.debug("Timeout for sequence number %s", self.unack)
+        if self.Q_4_4 == 1:
+            self.ssthresh = self.cwnd / 2.0
+            self.cwnd = float(1)
+            log.debug("Congestion control: CWND multiplicative decrease to  %s", self.cwnd)
+            log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
+
         raise self.RETRANSMIT()
 
     @ATMT.state()
