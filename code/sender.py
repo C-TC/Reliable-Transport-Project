@@ -221,18 +221,9 @@ class GBNSender(Automaton):
                 if index_mod in self.buffer:
                     self.buffer.pop(index_mod)
 
-            # Q4.4 
-            if self.Q_4_4 == 1:
-                if self.cwnd < self.ssthresh:
-                    self.cwnd += 1.0
-                else:
-                    self.cwnd += 1.0 / self.cwnd
 
             # Q4.2 and Q4.4 share the same duplicate count, but don't rely on each other 
-            if self.Q_4_2 == 1 or self.Q_4_4:
-                # deal with duplicated acks within sender's window
-                # maybe use negotiated window better?  
-
+            if self.Q_4_2 == 1 or self.Q_4_4 == 1:
                 # deal with number overflow
                 if self.current < possible_win:
                     ack_in_win = ack >= (self.current-possible_win) % 2**self.n_bits or ack < self.current
@@ -244,12 +235,20 @@ class GBNSender(Automaton):
                         self.duplicated_times += 1
                         log.debug("Receive ack %s for the %s time", ack, self.duplicated_times)
                         
-                        # branching of Q4.4 should be in front of Q4.2!
+                        # branching of Q4.4 should be in front of Q4.2 because we reset duplicated_times in Q4.2!
                         if self.Q_4_4 == 1 and self.duplicated_times >= 3:
                             self.ssthresh = self.cwnd / 2.0
                             self.cwnd = self.ssthresh
+                            # if cwnd < 1, it's not reasonable, set to 1
+                            if self.cwnd < 1:
+                                self.cwnd = float(1)
                             log.debug("Congestion control: CWND fast recovery to  %s", self.cwnd)
                             log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
+                            if self.Q_4_2 == 0:
+                                # if Q4.2 is not on, while Q.4 is, we reset  duplicated_times here.
+                                # This is not suggested in lecture notes, but I think it's reasonable to reset the counter.
+                                self.prev_ack = -1
+                                self.duplicated_times = 1 # this should be unnecessary
 
                         if self.Q_4_2 == 1:
                             # resend if duplicated = 3
@@ -271,6 +270,14 @@ class GBNSender(Automaton):
                         # not duplicated, reset record
                         self.prev_ack = ack
                         self.duplicated_times = 1
+
+                        # Q4.4 
+                        if self.Q_4_4 == 1:
+                            if self.cwnd < self.ssthresh:
+                                self.cwnd += 1.0
+                            else:
+                                self.cwnd += 1.0 / self.cwnd
+
 
             # Q 4.3.2 only need to check hlen, no need to determine if receiver support sack
             if self.SACK == 1:
