@@ -91,7 +91,8 @@ class GBNSender(Automaton):
         self.buffer = {}
         self.current = 0
         self.unack = 0
-        self.receiver_win = win
+        self.receiver_win = win 
+        self.window_correctly_set = 0 # here I assume num start from 0!
         self.Q_4_2 = Q_4_2
         self.prev_ack = -1
         self.duplicated_times = 0
@@ -145,7 +146,7 @@ class GBNSender(Automaton):
                 ###############################################################
 
                 # send with negotiated window size
-                proper_win =min(self.win,self.receiver_win)
+                proper_win = min(self.win,self.receiver_win)
                 # Q4.4 win <= cwnd
                 if self.Q_4_4 == 1:
                     proper_win =min(proper_win, int(self.cwnd))
@@ -198,15 +199,28 @@ class GBNSender(Automaton):
             # remove all the acknowledged sequence numbers from the buffer #
             # make sure that you can handle a sequence number overflow     #
             ################################################################
+            # if window size set correctly and safely, no need to change anything
+            if self.window_correctly_set == 0:
+                if self.receiver_win > self.win:
+                    # if receiver window is larger, then nothing to worry
+                    self.window_correctly_set = 1
+                elif ack > self.win:
+                    # the first time ack > senderwindow, certainly min(self.win, self.receiver_win) is safe
+                    self.window_correctly_set = 1
 
             self.unack=ack
-            possible_win=max(self.win, self.receiver_win)
-            #for index in range(self.unack-negotiated_win, self.unack):
-            #should we use the negotiated window size here?
-            # maybe problem before first ack comes.
+
+            if self.window_correctly_set == 1:
+                possible_win = min(self.win, self.receiver_win)
+            else:
+                # use sender window, actually same as max(self.win, self.receiver_win)
+                possible_win = self.win
+            
             for index in range(self.unack-possible_win, self.unack):
-                if index % 2**self.n_bits in self.buffer:
-                    self.buffer.pop(index % 2**self.n_bits)
+                index_mod = index % 2**self.n_bits
+                if index_mod in self.buffer:
+                    self.buffer.pop(index_mod)
+
             # Q4.4 
             if self.Q_4_4 == 1:
                 if self.cwnd < self.ssthresh:
@@ -227,7 +241,7 @@ class GBNSender(Automaton):
                 if ack_in_win == 1:
                     if ack == self.prev_ack:
                         # duplicated ack
-                        self.duplicated_times = self.duplicated_times + 1
+                        self.duplicated_times += 1
                         log.debug("Receive ack %s for the %s time", ack, self.duplicated_times)
                         
                         # branching of Q4.4 should be in front of Q4.2!
