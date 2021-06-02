@@ -80,10 +80,10 @@ class GBNSender(Automaton):
                    Q_4_2, Q_4_3, Q_4_4, **kwargs):
         """Initialize Automaton."""
         Automaton.parse_args(self, **kwargs)
-        self.Q_4_4 = 1
+        self.Q_4_4 = Q_4_4
         self.win = win
-        self.cwnd = 1
-        self.ssthresh = 10000
+        self.cwnd = 1.0
+        self.ssthresh = 10000.0
         self.n_bits = n_bits
         assert self.win < 2**self.n_bits
         self.receiver = receiver
@@ -99,7 +99,6 @@ class GBNSender(Automaton):
         self.Q_4_2 = Q_4_2
         self.duplicated_acks = 1
         self.SACK = Q_4_3
-        # self.Q_4_4 = Q_4_4
 
 
     def master_filter(self, pkt):
@@ -146,7 +145,9 @@ class GBNSender(Automaton):
                 # send a packet to the receiver containing the created header #
                 # and the corresponding payload                               #
                 ###############################################################
-                
+                if self.Q_4_4 == 1:
+                    self.win = int(self.cwnd)
+
                 # setup the header
                 header_GBN = GBN(
                     type="data", 
@@ -319,13 +320,21 @@ class GBNSender(Automaton):
                             send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
 
             if self.Q_4_4 == 1:
+                if self.unack == ack:
+                    self.duplicated_acks += 1
+
+                if self.duplicated_acks == 3:
+                    self.ssthresh = self.cwnd / 2.0
+                    self.cwnd = self.ssthresh
+                    self.duplicated_acks = 1
+
                 if self.cwnd < self.ssthresh:
-                    self.cwnd += 1
-                    self.win = self.cwnd
+                    self.cwnd += 1.0
                 else:
-                    self.cwnd += 1/self.cwnd
-                    self.win = int(self.cwnd)
+                    self.cwnd += 1.0 / self.cwnd
                 
+                log.debug("-----------Congestion control: slow start threshold set to %s", self.ssthresh)
+                log.debug("-----------Congestion control: CWND set to %s", self.cwnd)
                 window_history.append(self.win)
 
             # update the unack
@@ -340,9 +349,12 @@ class GBNSender(Automaton):
         """Transition: Timeout is reached for first unacknowledged packet."""
 
         if self.Q_4_4 == 1:
-            self.ssthresh = self.win / 2
-            self.cwnd = self.win = 1
+            self.ssthresh = self.win / 2.0
+            self.cwnd = 1.0
             window_history.append(self.win)
+            self.duplicated_acks = 1
+            log.debug("-----------Congestion control: slow start threshold set to %s", self.ssthresh)
+            log.debug("-----------Congestion control: CWND set to %s", self.cwnd)
 
         log.debug("Timeout for sequence number %s", self.unack)
 
