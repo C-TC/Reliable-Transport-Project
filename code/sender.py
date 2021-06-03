@@ -13,6 +13,7 @@ from scapy.packet import Packet, bind_layers
 from scapy.fields import (BitEnumField, BitField, ShortField, ByteField,
                           ConditionalField)
 from scapy.automaton import Automaton, ATMT
+# from matplotlib import pyplot as plt
 
 FORMAT = "[SENDER:%(lineno)3s - %(funcName)10s()] %(message)s"
 logging.basicConfig(format=FORMAT)
@@ -80,7 +81,7 @@ class GBNSender(Automaton):
                    Q_4_2, Q_4_3, Q_4_4, **kwargs):
         """Initialize Automaton."""
         Automaton.parse_args(self, **kwargs)
-        Q_4_4 = 1
+        # Q_4_4 = 1
         self.Q_4_4 = Q_4_4
         self.win = win
         self.cwnd = 1.0
@@ -120,6 +121,9 @@ class GBNSender(Automaton):
     def END(self):
         """End state of the automaton."""
         log.debug(window_history)
+
+        # plt.plot(window_history)
+        # plt.show()
         log.debug("All packets successfully transmitted!")
 
     @ATMT.state()
@@ -207,8 +211,17 @@ class GBNSender(Automaton):
             log.debug(window_history)
 
             # loop through the possible window
-            for num in range(ack - min(self.win, self.receiver_win), ack):
+            # for num in range(ack - min(self.win, self.receiver_win), ack):
 
+            # max_num = (self.unack + min(self.sender_win, self.win)) % 2**self.n_bits
+
+            # # if the window is wrapped and the ack is outside
+            # if (max_num < self.unack and (max_num < ack and ack < self.unack)
+            # # or if the window is not wrapped and the ack is not inside
+            # or max_num > self.unack and not (self.unack < ack and ack < max_num)):
+            #     self.SEND()
+
+            for num in range(ack - min(self.win, self.receiver_win), ack):
                 # wrap the possible sequence numbers
                 num = num % 2**self.n_bits
 
@@ -335,7 +348,7 @@ class GBNSender(Automaton):
                 
                 log.debug("-----------Congestion control: slow start threshold set to %s", self.ssthresh)
                 log.debug("-----------Congestion control: CWND set to %s", self.cwnd)
-                window_history.append(self.win)
+                window_history.append(self.cwnd)
 
             # update the unack
             self.unack = ack
@@ -349,9 +362,10 @@ class GBNSender(Automaton):
         """Transition: Timeout is reached for first unacknowledged packet."""
 
         if self.Q_4_4 == 1:
-            self.ssthresh = self.win / 2.0
+            if self.cwnd > 2:
+                self.ssthresh = self.cwnd / 2.0
             self.cwnd = 1.0
-            window_history.append(self.win)
+            window_history.append(self.cwnd)
             self.duplicated_acks = 1
             log.debug("-----------Congestion control: slow start threshold set to %s", self.ssthresh)
             log.debug("-----------Congestion control: CWND set to %s", self.cwnd)
