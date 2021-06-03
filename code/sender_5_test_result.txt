@@ -1,0 +1,88 @@
+Time:1622723108186
+TEST RESULT
+
+
+info_checker: INFO: running tests for Q4.3.2 -- without loss
+INFO: group 26 runs against our reference implementation
+INFO: device under test: SENDER
+INFO: NBITS: 5 - window size: 4
+INFO: Q_4_2: 0 - Q_4_3: 1 - Q_4_4: 0
+
+
+
+data_checker: All pass
+
+seq_no_loss_checker: All pass
+
+static_header_checker: Found 53 error(s)
+ERROR: expected window: 4 got: 1; hint: first packet
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERRO
+R: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected wind
+ow: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: packet before the sequence number overflow
+ERROR: expected window: 4 got: 3; hint: first packet after the sequence number overflow
+ERROR: expected window: 4 got: 3; hint: second packet after the sequence number overflow
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 3; hint: nothing special
+ERROR: expected window: 4 got: 2; hint: last packet
+
+==============================
+
+
+info_checker: INFO: running tests for Q4.3.2 -- with loss
+INFO: group 26 runs against our reference implementation
+INFO: device under test: SENDER
+INFO: NBITS: 5 - window size: 10
+INFO: Q_4_2: 0 - Q_4_3: 1 - Q_4_4: 0
+
+
+
+Run time error for seq_loss_checker info_checker data_checker static_header_checker : Time out for running implementation code!
+
+

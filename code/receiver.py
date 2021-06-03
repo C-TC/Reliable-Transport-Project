@@ -240,7 +240,7 @@ class GBNReceiver(Automaton):
             else:
                 ##################################
                 
-                # if the send support SACK
+                # if the sender support SACK
                 if pkt.getlayer(GBN).options == 1:
                     
                     blocks = []
@@ -273,7 +273,7 @@ class GBNReceiver(Automaton):
                                  hlen=6 + 3 * len(blocks),
                                  num=self.next,
                                  win=self.win,
-                                 block_len=len(blocks),
+                                 block_len=len(blocks) if len(blocks) > 0 else None,
                                  b1_start=blocks[0][0] if len(blocks) >= 1 else None,
                                  b1_len=blocks[0][1] if len(blocks) >= 1 else None,
                                  pad1=0 if len(blocks) >= 2 else None,

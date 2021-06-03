@@ -80,6 +80,7 @@ class GBNSender(Automaton):
                    Q_4_2, Q_4_3, Q_4_4, **kwargs):
         """Initialize Automaton."""
         Automaton.parse_args(self, **kwargs)
+        Q_4_4 = 1
         self.Q_4_4 = Q_4_4
         self.win = win
         self.cwnd = 1.0
@@ -151,6 +152,7 @@ class GBNSender(Automaton):
                 # setup the header
                 header_GBN = GBN(
                     type="data", 
+                    options=self.SACK,
                     len=len(payload), 
                     hlen=6, 
                     num=self.current, 
@@ -245,7 +247,7 @@ class GBNSender(Automaton):
                         send(IP(src=self.sender, dst=self.receiver) / header_GBN / payload)
 
                         # reset the counter every 3 duplicates
-                        self.duplicated_acks = 1
+                        self.duplicated_acks = 0
                     
                 else:
 
@@ -299,8 +301,6 @@ class GBNSender(Automaton):
                     # send all the holes
                     for hole in holes:
                         
-                        log.debug(holes)
-                        log.debug(self.buffer)
                         if hole in self.buffer:
                             # get the payload
                             payload = self.buffer[hole]
@@ -323,10 +323,10 @@ class GBNSender(Automaton):
                 if self.unack == ack:
                     self.duplicated_acks += 1
 
-                if self.duplicated_acks == 3:
+                if self.duplicated_acks >= 3 and self.cwnd >= 2:
                     self.ssthresh = self.cwnd / 2.0
                     self.cwnd = self.ssthresh
-                    self.duplicated_acks = 1
+                    self.duplicated_acks = 0
 
                 if self.cwnd < self.ssthresh:
                     self.cwnd += 1.0

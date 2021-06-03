@@ -1,0 +1,37 @@
+Time:1622722651096
+TEST RESULT
+
+
+info_checker: INFO: running tests for Q4.3.1 -- without loss
+INFO: group 26 runs against our reference implementation
+INFO: device under test: RECEIVER
+INFO: NBITS: 5 - window size: 4
+INFO: Q_4_2: 0 - Q_4_3: 1 - Q_4_4: 0
+
+
+
+data_checker: All pass
+
+seq_no_loss_checker: All pass
+
+static_header_checker: All pass
+
+==============================
+
+
+info_checker: INFO: running tests for Q4.3.1 -- with loss
+INFO: group 26 runs against our reference implementation
+INFO: device under test: RECEIVER
+INFO: NBITS: 5 - window size: 10
+INFO: Q_4_2: 0 - Q_4_3: 1 - Q_4_4: 0
+
+
+
+data_checker: All pass
+
+static_header_checker: All pass
+
+seq_loss_checker: All pass
+
+==============================
+
