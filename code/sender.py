@@ -91,15 +91,15 @@ class GBNSender(Automaton):
         self.buffer = {}
         self.current = 0
         self.unack = 0
-        self.receiver_win = win 
-        self.window_correctly_set = 0 # here I assume num start from 0!
+        self.receiver_win = win # intialize the receiver window as sender window
+        self.window_correctly_set = 0 # set to 1 if the sender has already known the correct receiver window
         self.Q_4_2 = Q_4_2
-        self.prev_ack = -1
-        self.duplicated_times = 0
+        self.prev_ack = -1 # the number of previous ack, initialize to -1 as an impossible sequence number.
+        self.duplicated_times = 0 # number of times the same ack is received 
         self.SACK = Q_4_3
         self.Q_4_4 = Q_4_4
-        self.cwnd = float(1)
-        self.ssthresh = float('inf')
+        self.cwnd = float(1) # congestion window
+        self.ssthresh = float('inf') # congestion slow start threshold
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -145,12 +145,14 @@ class GBNSender(Automaton):
                 # and the corresponding payload                               #
                 ###############################################################
 
-                # send with negotiated window size
+                # send with the proper window size
                 proper_win = min(self.win,self.receiver_win)
-                # Q4.4 win <= cwnd
+
+                # Q4.4 the window size should be less than cwnd
                 if self.Q_4_4 == 1:
                     proper_win =min(proper_win, int(self.cwnd))
-
+                
+                # set the header for data segment, options=1 of SACK is used.
                 header_GBN = GBN(type="data",
                                  options=self.SACK,
                                  len=len(payload),
@@ -158,7 +160,6 @@ class GBNSender(Automaton):
                                  num=self.current,
                                  win=proper_win)
                 send(IP(src=self.sender,dst=self.receiver) / header_GBN / payload)
-                #log.debug("Current payload size: %s", len(payload))
 
                 # sequence number of next packet
                 self.current = int((self.current + 1) % 2**self.n_bits)
@@ -199,16 +200,29 @@ class GBNSender(Automaton):
             # remove all the acknowledged sequence numbers from the buffer #
             # make sure that you can handle a sequence number overflow     #
             ################################################################
-            # if window size set correctly and safely, no need to change anything
+
+            ####################################
+
+            # The following if clause is used to identify if sender receives the receiver window size.
+            # Think about this case: if sender window is much larger than receiver window, and RTT is large.
+            # Then the sender will send all packets in window size min(self.win, self.receiver_win), which is equal
+            # to sender window size at the beginning (calibrated after ack received). 
+            # Problem is raised when sender receiving acks. It deletes acked packets from the buffer.
+            # We use "for index in range(self.unack-min(self.win, self.receiver_win), self.unack):" to iterate in the buffer. However, the
+            # current min(self.win, self.receiver_win) is smaller, which might cause some packets left in buffer.
+            # The test scripts does not consider this. But it's an actual problem
+            # Our solution: 
+            # use variable window_correctly_set and possible_win to avoid this problem.
+
+            # if window size set correctly and safely (window_correctly_set=1), ignore the if clause.
             if self.window_correctly_set == 0:
                 if self.receiver_win > self.win:
-                    # if receiver window is larger, then nothing to worry
+                    # if receiver window is larger, then no problem in the first window size packets.
                     self.window_correctly_set = 1
                 elif ack > self.win:
                     # the first time ack > senderwindow, certainly min(self.win, self.receiver_win) is safe
+                    # for more detailed explanation, see report.
                     self.window_correctly_set = 1
-
-            self.unack=ack
 
             if self.window_correctly_set == 1:
                 possible_win = min(self.win, self.receiver_win)
@@ -216,26 +230,55 @@ class GBNSender(Automaton):
                 # use sender window, actually same as max(self.win, self.receiver_win)
                 possible_win = self.win
             
+            ####################################
+
+
+            # deal with delayed ack
+            # if we receive the ack in the desired range [unack, unack + possible_win + 1), duplicated acks are considered.
+            if self.unack + possible_win + 1 > 2**self.n_bits:
+                #overflow
+                effective_ack = ack >= self.unack or ack < self.unack + possible_win + 1
+            else: 
+                # no overflow
+                effective_ack = ack >= self.unack and ack < self.unack + possible_win + 1
+
+            # Determine if the ack is out of date.
+            if effective_ack == 0:
+                # back to SEND state
+                raise self.SEND()
+            
+            # we received an effective ack
+
+            # update unack
+            self.unack = ack
+            
+            # remove acked packets from buffer (may be multiple ones)
+            # only consider those inside desired window
             for index in range(self.unack-possible_win, self.unack):
+                # deal with overflow
                 index_mod = index % 2**self.n_bits
                 if index_mod in self.buffer:
                     self.buffer.pop(index_mod)
 
 
-            # Q4.2 and Q4.4 share the same duplicate count, but don't rely on each other 
+            # Q4.2 and Q4.4 share the same duplicate ack counter
+            # operating correctly in all possible settings 
+            # (e.g. Q_4_2 == 1 and self.Q_4_4 == 1, also Q_4_2 == 0 and self.Q_4_4 == 1, etc.)
             if self.Q_4_2 == 1 or self.Q_4_4 == 1:
-                # deal with number overflow
+                # determine if the ack is in the desired range [self.current-possible_win, self.current) 
+                # If yes, ack_in_win = 1, else 0
                 if self.current < possible_win:
                     ack_in_win = ack >= (self.current-possible_win) % 2**self.n_bits or ack < self.current
                 else:
                     ack_in_win = ack >= self.current-possible_win and ack < self.current
+                
                 if ack_in_win == 1:
                     if ack == self.prev_ack:
                         # duplicated ack
                         self.duplicated_times += 1
                         log.debug("Receive ack %s for the %s time", ack, self.duplicated_times)
                         
-                        # branching of Q4.4 should be in front of Q4.2 because we reset duplicated_times in Q4.2!
+                        # branching of Q4.4 should be in front of Q4.2 because we reset self.duplicated_times in Q4.2!
                         if self.Q_4_4 == 1 and self.duplicated_times >= 3:
                             self.ssthresh = self.cwnd / 2.0
                             self.cwnd = self.ssthresh
@@ -244,11 +287,12 @@ class GBNSender(Automaton):
                                 self.cwnd = float(1)
                             log.debug("Congestion control: CWND fast recovery to  %s", self.cwnd)
                             log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
+
                             if self.Q_4_2 == 0:
-                                # if Q4.2 is not on, while Q.4 is, we reset  duplicated_times here.
+                                # if Q4.2 is not on, while Q4.4 is, we reset self.duplicated_times here.
                                 # This is not suggested in lecture notes, but I think it's reasonable to reset the counter.
                                 self.prev_ack = -1
-                                self.duplicated_times = 1 # this should be unnecessary
+                                self.duplicated_times = 1 
 
                         if self.Q_4_2 == 1:
                             # resend if duplicated = 3
@@ -262,12 +306,15 @@ class GBNSender(Automaton):
                                     win=min(self.win,self.receiver_win))
                                 send(IP(src=self.sender,dst=self.receiver) / header_GBN / pl)
                                 log.debug("Fast resend packet: %s", ack)
+
                                 # reset record
                                 self.prev_ack = -1
-                                self.duplicated_times = 1 # this should be unnecessary
+                                self.duplicated_times = 1 
                         
                     else:
-                        # not duplicated, reset record
+                        # not duplicated
+
+                        # reset record
                         self.prev_ack = ack
                         self.duplicated_times = 1
 
@@ -284,31 +331,38 @@ class GBNSender(Automaton):
                 header_len = pkt.getlayer(GBN).hlen
                 send_list = []
                 if header_len > 6:
-                    # firstly, if headerlength > 6, means the acked packet might be lost, resend it.
-                    # deal with overflow
+                    # resend packets in range [unack ,  left edge of 1st block)
                     first_elem = self.unack
                     if pkt.getlayer(GBN).left_1 < first_elem:
+                        # overflow
                         send_list = list(range(first_elem, 2**self.n_bits))
                         send_list.extend(range(0, pkt.getlayer(GBN).left_1))
                     else:
+                        # no overflow
                         send_list = list(range(first_elem, pkt.getlayer(GBN).left_1))
 
-                # between first and second block 
+                # between first and second block
+                # [left edge of 1st block + length of 1st block  ,  left edge of 2nd block)
                 if header_len > 9:
                     first_elem = (pkt.getlayer(GBN).left_1 + pkt.getlayer(GBN).len_1) % 2**self.n_bits
                     if pkt.getlayer(GBN).left_2 < first_elem:
+                        # overflow
                         send_list.extend(range(first_elem, 2**self.n_bits))
                         send_list.extend(range(0, pkt.getlayer(GBN).left_2))
                     else:
+                        # no overflow
                         send_list.extend(range(first_elem, pkt.getlayer(GBN).left_2))
 
                 # between second and third block 
+                # [left edge of 2nd block + length of 2nd block  ,  left edge of 3rd block)
                 if header_len > 12:
                     first_elem = (pkt.getlayer(GBN).left_2 + pkt.getlayer(GBN).len_2) % 2**self.n_bits
                     if pkt.getlayer(GBN).left_3 < first_elem:
+                        # overflow
                         send_list.extend(range(first_elem, 2**self.n_bits))
                         send_list.extend(range(0, pkt.getlayer(GBN).left_3))
                     else:
+                        # no overflow
                         send_list.extend(range(first_elem, pkt.getlayer(GBN).left_3))
 
                 for idx in send_list:
@@ -351,7 +405,7 @@ class GBNSender(Automaton):
 
         for index,payload in self.buffer.items():
             header_GBN = GBN(type="data",
-                                 options=0,
+                                 options=self.SACK,
                                  len=len(payload),
                                  hlen=6,
                                  num=index,
