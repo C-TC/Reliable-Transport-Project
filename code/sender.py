@@ -92,7 +92,7 @@ class GBNSender(Automaton):
         self.current = 0
         self.unack = 0
         self.receiver_win = win # intialize the receiver window as sender window
-        self.window_correctly_set = 0 # set to 1 if the sender has already known the correct receiver window
+        self.win_safe_to_use_min = 0 # set to 1 if it's already safe to use min(self.win, self.receiver_win) when popping from buffer
         self.Q_4_2 = Q_4_2
         self.prev_ack = -1 # the number of previous ack, initialize to -1 as an impossible sequence number.
         self.duplicated_times = 0 # number of times the same ack is received 
@@ -212,19 +212,19 @@ class GBNSender(Automaton):
             # current min(self.win, self.receiver_win) is smaller, which might cause some packets left in buffer.
             # The test scripts does not consider this. But it's an actual problem
             # Our solution: 
-            # use variable window_correctly_set and possible_win to avoid this problem.
+            # use variable win_safe_to_use_min and possible_win to avoid this problem.
 
-            # if window size set correctly and safely (window_correctly_set=1), ignore the if clause.
-            if self.window_correctly_set == 0:
+            # if using min window size is already safe (win_safe_to_use_min=1), ignore the if clause.
+            if self.win_safe_to_use_min == 0:
                 if self.receiver_win > self.win:
                     # if receiver window is larger, then no problem in the first window size packets.
-                    self.window_correctly_set = 1
+                    self.win_safe_to_use_min = 1
                 elif ack > self.win:
                     # the first time ack > senderwindow, certainly min(self.win, self.receiver_win) is safe
                     # for more detailed explanation, see report.
-                    self.window_correctly_set = 1
+                    self.win_safe_to_use_min = 1
 
-            if self.window_correctly_set == 1:
+            if self.win_safe_to_use_min == 1:
                 possible_win = min(self.win, self.receiver_win)
             else:
                 # use sender window, actually same as max(self.win, self.receiver_win)
