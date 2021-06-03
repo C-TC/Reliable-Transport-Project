@@ -97,8 +97,7 @@ class GBNReceiver(Automaton):
         self.end_receiver = False
         self.end_num = -1
         self.buffer = {}
-        self.support_SACK = 1 # set to 1 in Q4.3.1
-        self.use_SACK = 0 # set to 1 if sender give option 1 at least once in Q4.3.1
+        self.support_SACK = 1 # set to 1 after SACK is implemented.
 
     def master_filter(self, pkt):
         """Filter packets of interest.
@@ -177,20 +176,26 @@ class GBNReceiver(Automaton):
                     log.debug("Out of sequence segment [num = %s] received. "
                               "Expected %s", num, self.next)
                 '''
+                # the sender window
                 send_win = pkt.getlayer(GBN).win
                 if send_win > self.win:
                     # sender does not know the correct window size yet, use a larger window to buffer
                     possible_win = max(send_win, self.win)
                 else:
+                    # sender knows the correct window size which is min(send_win, self.win)
                     possible_win = min(send_win, self.win)
 
-                # detect if we need to buffer
+                # detect if we need to buffer, if num is within desired range, num_in_pwin=1 else 0.
                 if self.next + possible_win > 2**self.n_bits:
+                    # overflow
                     num_in_pwin = num >= self.next + 1 or num < (self.next + possible_win) % 2**self.n_bits
                 else:
+                    # not overflow
                     num_in_pwin = num >= self.next + 1 and num < self.next + possible_win
                 
                 if num == self.next:
+                    # the packet is exactly what receiver expect
+
                     log.debug("Packet has expected sequence number: %s", num)
 
                     # check if last packet --> end receiver
@@ -203,11 +208,12 @@ class GBNReceiver(Automaton):
                         file.write(payload)
 
                     log.debug("Delivered packet to upper layer: %s", num)
-
+                    
+                    # move the self.next to next expected packet
                     self.next = int((self.next + 1) % 2**self.n_bits)
 
                     while self.next in self.buffer:
-
+                        # the next expected packet is buffered
                         pl = self.buffer.pop(self.next)
 
                         # check if last packet --> end receiver
@@ -220,7 +226,8 @@ class GBNReceiver(Automaton):
                             file.write(pl)
 
                         log.debug("Delivered buffered packet to upper layer: %s", self.next)
-                        
+
+                        # move the self.next to next expected packet
                         self.next = int((self.next + 1) % 2**self.n_bits)
                     
                 elif num_in_pwin:
@@ -247,32 +254,42 @@ class GBNReceiver(Automaton):
 
             # the ACK will be received correctly
             else:
-                #default header length
+                # default header length
                 header_length = 6
+                # initialize some parameters needed to construct header.
                 num_blocks = 0
-                left_edge_arr = [0,0,0]
-                len_block_arr = [0,0,0]
+                left_edge_arr = [0,0,0] # the starting element of blocks
+                len_block_arr = [0,0,0] # the length of blocks
+
                 sender_SACK = pkt.getlayer(GBN).options
-                # use sack if both support
-                if self.use_SACK == 0 and sender_SACK == 1 and self.support_SACK == 1:
-                    self.use_SACK = 1
-                if self.use_SACK == 1:
+
+                # use sack if both sender and receiver support
+                if sender_SACK == 1 and self.support_SACK == 1:
+                    # window size in packet header
                     send_win = pkt.getlayer(GBN).win
+                    # set to -5 to make it small enough. No special meaning for -5.
                     prev_in_block = -5
                     for i in range(self.next + 1, self.next + possible_win):
+                        # care of overflow 
                         packet_num = i % 2**self.n_bits
                         if packet_num in self.buffer:
-                            # consecutive
+                            # consecutive if num is 1 larger than previous one or num=0 and previous one = 2**self.n_bits -1
                             if prev_in_block == packet_num -1 or (packet_num == 0 and prev_in_block == 2**self.n_bits -1):
+                                # update the previous element number in the same block
                                 prev_in_block = packet_num
-                                # -1 because array index start from 0
+                                # length of the block++ (-1 because array index start from 0)
                                 len_block_arr[num_blocks-1] += 1
-                            # new block if still have space
+                            # this packet belongs to a new block, continue adding it if still have space in header
                             elif num_blocks < 3:
+                                # new block, so increase the number of blocks
                                 num_blocks += 1
+                                # new block, so the left edge is set to the packet number
                                 left_edge_arr[num_blocks-1] = packet_num
+                                # length of the block++
                                 len_block_arr[num_blocks-1] += 1
+                                # update the previous element number in the block
                                 prev_in_block = packet_num
+                    # calculate the header length based on number of blocks
                     header_length += 3 * num_blocks
 
                 # set header
