@@ -260,11 +260,14 @@ class GBNReceiver(Automaton):
                 num_blocks = 0
                 left_edge_arr = [0,0,0] # the starting element of blocks
                 len_block_arr = [0,0,0] # the length of blocks
+                use_Sack = 0 # determine the option field in header
 
                 sender_SACK = pkt.getlayer(GBN).options
 
                 # use sack if both sender and receiver support
                 if sender_SACK == 1 and self.support_SACK == 1:
+                    # set the option field in header to 1
+                    use_Sack = 1
                     # window size in packet header
                     send_win = pkt.getlayer(GBN).win
                     # set to -5 to make it small enough. No special meaning for -5.
@@ -294,7 +297,7 @@ class GBNReceiver(Automaton):
 
                 # set header
                 header_GBN = GBN(type="ack",
-                                options=self.use_SACK,
+                                options=use_Sack,
                                 len=0,
                                 hlen=header_length,
                                 num=self.next,
