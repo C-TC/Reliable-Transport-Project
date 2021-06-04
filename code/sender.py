@@ -14,6 +14,7 @@ from scapy.packet import Packet, bind_layers
 from scapy.fields import (BitEnumField, BitField, ShortField, ByteField,
                           ConditionalField)
 from scapy.automaton import Automaton, ATMT
+import time
 
 FORMAT = "[SENDER:%(lineno)3s - %(funcName)10s()] %(message)s"
 logging.basicConfig(format=FORMAT)
@@ -154,7 +155,7 @@ class GBNSender(Automaton):
                 
                 if self.Q_4_4 == 1:
                     with open("CWND.txt", "a") as text_file:
-                        text_file.write("%f\t%f\n" % (self.cwnd,self.ssthresh))
+                        text_file.write("%f\t%f\t%f\n" % (self.cwnd,self.ssthresh, time.time()))
 
                 # set the header for data segment, options=1 of SACK is used.
                 header_GBN = GBN(type="data",
@@ -291,6 +292,8 @@ class GBNSender(Automaton):
                                 self.cwnd = float(1)
                             log.debug("Congestion control: CWND fast recovery to  %s", self.cwnd)
                             log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
+                            with open("CWND.txt", "a") as text_file:
+                                text_file.write("%f\t%f\t%f\n" % (self.cwnd,self.ssthresh, time.time()))
                             if self.Q_4_2 == 0:
                                 # if Q4.2 is not on, while Q4.4 is, we reset self.duplicated_times here.
                                 # This is not suggested in lecture notes, but I think it's reasonable to reset the counter.
@@ -327,6 +330,8 @@ class GBNSender(Automaton):
                                 self.cwnd += 1.0
                             else:
                                 self.cwnd += 1.0 / self.cwnd
+                            with open("CWND.txt", "a") as text_file:
+                                text_file.write("%f\t%f\t%f\n" % (self.cwnd,self.ssthresh, time.time()))
 
 
             # Q 4.3.2 only need to check hlen, no need to determine if receiver support sack
@@ -393,6 +398,8 @@ class GBNSender(Automaton):
             self.cwnd = float(1)
             log.debug("Congestion control: CWND multiplicative decrease to  %s", self.cwnd)
             log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
+            with open("CWND.txt", "a") as text_file:
+                text_file.write("%f\t%f\t%f\n" % (self.cwnd,self.ssthresh, time.time()))
 
         raise self.RETRANSMIT()
 
