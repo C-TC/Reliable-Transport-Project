@@ -152,6 +152,10 @@ class GBNSender(Automaton):
                 if self.Q_4_4 == 1:
                     proper_win =min(proper_win, int(self.cwnd))
                 
+                if self.Q_4_4 == 1:
+                    with open("CWND.txt", "a") as text_file:
+                        text_file.write("%f\t%f\n" % (self.cwnd,self.ssthresh))
+
                 # set the header for data segment, options=1 of SACK is used.
                 header_GBN = GBN(type="data",
                                  options=self.SACK,
@@ -287,12 +291,12 @@ class GBNSender(Automaton):
                                 self.cwnd = float(1)
                             log.debug("Congestion control: CWND fast recovery to  %s", self.cwnd)
                             log.debug("Congestion control: slow start threshold set to %s", self.ssthresh)
-
                             if self.Q_4_2 == 0:
                                 # if Q4.2 is not on, while Q4.4 is, we reset self.duplicated_times here.
                                 # This is not suggested in lecture notes, but I think it's reasonable to reset the counter.
                                 self.prev_ack = -1
                                 self.duplicated_times = 1 
+
 
                         if self.Q_4_2 == 1:
                             # resend if duplicated = 3
@@ -306,7 +310,6 @@ class GBNSender(Automaton):
                                     win=min(self.win,self.receiver_win))
                                 send(IP(src=self.sender,dst=self.receiver) / header_GBN / pl)
                                 log.debug("Fast resend packet: %s", ack)
-
                                 # reset record
                                 self.prev_ack = -1
                                 self.duplicated_times = 1 
